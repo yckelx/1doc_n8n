@@ -1,0 +1,1124 @@
+{
+  "name": "Automatiza 1Doc - Main",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://altofeliz.1doc.com.br/",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -384,
+        -112
+      ],
+      "id": "479971ae-49a1-4d9e-894f-add50ff0032d",
+      "name": "GET - Pega Cookie"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://altofeliz.1doc.com.br/formEstrutura.php?formLogin=&pg=o/login&pre=b.php",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $json.headers['set-cookie'] }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "redirecionar"
+            },
+            {
+              "name": "redirect_signature"
+            },
+            {
+              "name": "redirecionar2"
+            },
+            {
+              "name": "tempo",
+              "value": "00:00:00"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -224,
+        -112
+      ],
+      "id": "3c860a40-a46e-44bb-ade9-5cef88a7d24a",
+      "name": "POST (Faz Login e Retorna a Página)",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "cxSlhrdOGSdRBGPA",
+          "name": "1Doc"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "linhasDaTabela",
+              "cssSelector": "=table.table-checkbox > tbody > tr",
+              "returnValue": "html",
+              "returnArray": true
+            }
+          ]
+        },
+        "options": {
+          "cleanUpText": false
+        }
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        -48,
+        -112
+      ],
+      "id": "912ca0a9-758b-43a5-ad0a-a05f2a0bb567",
+      "name": "Extrair Processos"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Limpar HTML desnecessário para economizar tokens\nconst items = $input.all();\nconst processedItems = [];\n\nfor (const item of items) {\n  let cleanHTML = item.json.linhasDaTabela;\n  \n  // Verificar se é string antes de aplicar replace\n  if (typeof cleanHTML === 'string') {\n    cleanHTML = cleanHTML\n      .replace(/<script[\\s\\S]*?<\\/script>/gi, '')\n      .replace(/<style[\\s\\S]*?<\\/style>/gi, '')\n      .replace(/\\s+/g, ' ')\n      .replace(/<!--[\\s\\S]*?-->/g, '')\n      .trim();\n  } else {\n    cleanHTML = String(cleanHTML || '').trim();\n  }\n    \n  processedItems.push({\n    json: {\n      linhasDaTabela: cleanHTML\n    }\n  });\n}\n\nreturn processedItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        -112
+      ],
+      "id": "03208b65-a923-453a-8c1c-a17f09a4d4b5",
+      "name": "Limpar HTML"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Processar em lotes para otimizar uso da IA\nconst BATCH_SIZE = 3;\nconst items = $input.all();\nconst batches = [];\n\nfor (let i = 0; i < items.length; i += BATCH_SIZE) {\n  const batch = items.slice(i, i + BATCH_SIZE);\n  const combinedHTML = batch.map(item => item.json.linhasDaTabela).join('\\n\\n');\n  \n  batches.push({\n    json: {\n      batchHTML: combinedHTML,\n      batchIndex: Math.floor(i / BATCH_SIZE),\n      itemCount: batch.length\n    }\n  });\n}\n\nreturn batches;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        -112
+      ],
+      "id": "f7cab310-ddb9-45c4-bc70-542a6067ff59",
+      "name": "Processar em Lotes"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=HTML_BATCH: {{ $json.batchHTML }}\n\nExtrair de cada linha da tabela HTML apenas:\n- documento\n- assunto  \n- remetente\n- link (prefixar com \"https://altofeliz.1doc.com.br\" se necessário)\n\nNÃO incluir descrição ainda.\n\nRetornar apenas array JSON:\n[{\"documento\":\"\", \"assunto\":\"\", \"remetente\":\"\", \"link\":\"\"}]",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.1,
+      "position": [
+        -560,
+        240
+      ],
+      "id": "04f3971e-d146-40ad-a715-ed924e65a84e",
+      "name": "IA - Extrair Info Básica"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Processar resposta da IA e separar em itens individuais\nconst items = $input.all();\nconst allDocuments = [];\n\nfor (const item of items) {\n  try {\n    const rawOutput = item.json.output || item.json.text || item.json.response || JSON.stringify(item.json);\n    \n    if (!rawOutput) {\n      continue;\n    }\n    \n    let cleanedString = String(rawOutput)\n      .replace(/```json\\s*/g, '')\n      .replace(/```\\s*/g, '')\n      .replace(/^[^\\[{]*/, '')\n      .replace(/[^\\]}]*$/, '')\n      .trim();\n    \n    let documents;\n    try {\n      documents = JSON.parse(cleanedString);\n    } catch (parseError) {\n      const jsonMatch = cleanedString.match(/\\[.*\\]/s) || cleanedString.match(/\\{.*\\}/s);\n      if (jsonMatch) {\n        documents = JSON.parse(jsonMatch[0]);\n      } else {\n        throw new Error('Não foi possível extrair JSON válido');\n      }\n    }\n    \n    if (Array.isArray(documents)) {\n      documents.forEach((doc, index) => {\n        if (doc && typeof doc === 'object') {\n          allDocuments.push({\n            json: {\n              documento: doc.documento || `doc_${Date.now()}_${index}`,\n              assunto: doc.assunto || 'Sem assunto',\n              remetente: doc.remetente || 'Sem remetente',\n              link: doc.link || ''\n            }\n          });\n        }\n      });\n    } else if (documents && typeof documents === 'object') {\n      allDocuments.push({\n        json: {\n          documento: documents.documento || `doc_${Date.now()}`,\n          assunto: documents.assunto || 'Sem assunto',\n          remetente: documents.remetente || 'Sem remetente',\n          link: documents.link || ''\n        }\n      });\n    }\n    \n  } catch (error) {\n    console.error('Erro ao processar resposta da IA:', error.message);\n  }\n}\n\nif (allDocuments.length === 0) {\n  return [{\n    json: {\n      documento: 'nenhum_encontrado',\n      assunto: 'Nenhum documento processado',\n      remetente: 'Sistema',\n      link: ''\n    }\n  }];\n}\n\nreturn allDocuments;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        240
+      ],
+      "id": "6bd33bd9-02dc-4292-8159-7fde86df3c2d",
+      "name": "Processar Resposta IA"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.link }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $('GET - Pega Cookie').item.json.headers['set-cookie'] }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        96,
+        240
+      ],
+      "id": "46beae6c-e05b-4211-9806-d47916448e4c",
+      "name": "GET - Página Individual"
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "conteudo_emissao",
+              "cssSelector": "div.emissao_conteudo"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        272,
+        240
+      ],
+      "id": "1fb80ba0-9d93-4e6a-8040-503faaf44c20",
+      "name": "Extrair Conteúdo Descrição"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=CONTEUDO: {{ $json.conteudo_emissao }}\nASSUNTO: {{ $json.assunto }}\n\nFormatar descrição baseada no assunto:\n\n- Se DIÁRIAS/DIÁRIA/DIARIA: extrair data e fração. Ex: \"10, 12 DE JULHO, FRAÇÃO: 1/4\"\n- Se FÉRIAS: extrair início e duração. Ex: \"Início: 22/07/2025, 10 dias\"\n- Se LICENÇA FAMÍLIA: extrair início e duração. Ex: \"Início: 25/07/2025, 2 dias\"\n\nRetornar APENAS a descrição formatada.",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.1,
+      "position": [
+        432,
+        240
+      ],
+      "id": "08fabf57-992b-4c86-87ee-075111e202e1",
+      "name": "IA - Formatar Descrição"
+    },
+    {
+      "parameters": {
+        "content": "## Extração de Dados \nAcessa o 1Doc, faz login e extrai o HTML da página inicial.",
+        "height": 320,
+        "width": 1328
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -592,
+        -224
+      ],
+      "id": "e6534c01-3003-4dd3-aef0-9dc68c887267",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## Processos Gerais\nExtrai breve descrição dos processos.",
+        "height": 416,
+        "width": 592,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -592,
+        128
+      ],
+      "id": "6946b190-8bcc-444b-a6de-e1d36b400491",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## Processos Detalhados \nAcessa cada processo individualmente, entende o conteúdo e extrai.",
+        "height": 416,
+        "width": 720,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        16,
+        128
+      ],
+      "id": "c9315dc8-dd0d-43fe-806c-78366ad1c25e",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "## Anotação \nSalva os processos extraídos e filtrados na sua respectiva planilha.",
+        "height": 768,
+        "width": 880,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        768,
+        -224
+      ],
+      "id": "983ad56d-1399-4a0f-afe4-674898575209",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc",
+          "mode": "list",
+          "cachedResultName": "Automatiza 1Doc",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 680299074,
+          "mode": "list",
+          "cachedResultName": "Férias",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc/edit#gid=680299074"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Documento": "={{ $('Processar Resposta IA').item.json.documento }}",
+            "Assunto": "={{ $('Processar Resposta IA').item.json.assunto }}",
+            "Remetente": "={{ $('Processar Resposta IA').item.json.remetente }}",
+            "Descrição": "={{ $json.descricao }}"
+          },
+          "matchingColumns": [
+            "Documento"
+          ],
+          "schema": [
+            {
+              "id": "Documento",
+              "displayName": "Documento",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Assunto",
+              "displayName": "Assunto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Remetente",
+              "displayName": "Remetente",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Descrição",
+              "displayName": "Descrição",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        1248,
+        304
+      ],
+      "id": "ae01a6c6-e7a2-47fa-922d-14957941eb09",
+      "name": "Planilha Férias",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "AWLTVDXq9Mhp7G4U",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc",
+          "mode": "list",
+          "cachedResultName": "Automatiza 1Doc",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 86263188,
+          "mode": "list",
+          "cachedResultName": "Licença Família",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc/edit#gid=86263188"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Documento": "={{ $('Processar Resposta IA').item.json.documento }}",
+            "Assunto": "={{ $('Processar Resposta IA').item.json.assunto }}",
+            "Remetente": "={{ $('Processar Resposta IA').item.json.remetente }}",
+            "Descrição": "={{ $json.descricao }}"
+          },
+          "matchingColumns": [
+            "Documento"
+          ],
+          "schema": [
+            {
+              "id": "Documento",
+              "displayName": "Documento",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Assunto",
+              "displayName": "Assunto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Remetente",
+              "displayName": "Remetente",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Descrição",
+              "displayName": "Descrição",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        1248,
+        112
+      ],
+      "id": "a80b3558-bd5a-452b-aa7d-3d67c2316dd4",
+      "name": "Planilha LF",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "AWLTVDXq9Mhp7G4U",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc",
+          "mode": "list",
+          "cachedResultName": "Automatiza 1Doc",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Diárias",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Assunto": "={{ $('Processar Resposta IA').item.json.assunto }}",
+            "Documento": "={{ $('Processar Resposta IA').item.json.documento }}",
+            "Remetente": "={{ $('Processar Resposta IA').item.json.remetente }}",
+            "Descrição": "={{ $json.descricao }}"
+          },
+          "matchingColumns": [
+            "Documento"
+          ],
+          "schema": [
+            {
+              "id": "Documento",
+              "displayName": "Documento",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Assunto",
+              "displayName": "Assunto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Remetente",
+              "displayName": "Remetente",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Descrição",
+              "displayName": "Descrição",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        1248,
+        -96
+      ],
+      "id": "952a31ee-42a5-4fd3-9ff0-61366de36cc9",
+      "name": "Planilha Diárias",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "AWLTVDXq9Mhp7G4U",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Processar Resposta IA').item.json.assunto }}",
+                    "rightValue": "DIÁRIA",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    },
+                    "id": "b535e0e3-e43d-4930-b5c2-3ca79bfa3ebe"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Diárias"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "b7720e29-282d-497b-b61b-b1307b2fcb77",
+                    "leftValue": "={{ $('Processar Resposta IA').item.json.assunto }}",
+                    "rightValue": "Licença Família",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Licença Família"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "d6bfa7f2-6666-4536-a3ed-effa5bdbb195",
+                    "leftValue": "={{ $('Processar Resposta IA').item.json.assunto }}",
+                    "rightValue": "Férias",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Férias"
+            }
+          ]
+        },
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1024,
+        96
+      ],
+      "id": "8d3ba8a3-1e23-4cd8-acdd-880ca10b1bec",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combinar dados básicos com descrição formatada\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const descricaoFormatada = item.json.output || item.json.text || 'Descrição não disponível';\n  \n  results.push({\n    json: {\n      documento: item.json.documento,\n      assunto: item.json.assunto,\n      remetente: item.json.remetente,\n      link: item.json.link,\n      descricao: descricaoFormatada.trim()\n    }\n  });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        112
+      ],
+      "id": "8734207c-033f-45ce-bb2a-1d8ed3ff852f",
+      "name": "Combinar Dados Finais"
+    },
+    {
+      "parameters": {
+        "path": "07f1980d-27a5-4723-b478-b99fdd6ac5d1",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -544,
+        -112
+      ],
+      "id": "3ed7ae15-e51d-4138-96fb-f708de788970",
+      "name": "Webhook",
+      "webhookId": "07f1980d-27a5-4723-b478-b99fdd6ac5d1"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"success\",\n  \"message\": \"Automação finalizada e dados salvos na planilha!\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1488,
+        112
+      ],
+      "id": "9a9e3c5c-cf37-4f53-add6-1d446153b0ab",
+      "name": "Resposta ao Webhook"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        432,
+        416
+      ],
+      "id": "6331a06f-f96e-4078-8b43-80cf58d5e460",
+      "name": "Gemini 2",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "0RC9YItQpMZisHlt",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        416
+      ],
+      "id": "2b8d3dd3-970d-4003-bb68-02fd1d3b884a",
+      "name": "Gemini 1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "0RC9YItQpMZisHlt",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "advanced": true,
+        "mergeByFields": {
+          "values": [
+            {
+              "field1": "documento",
+              "field2": "_TodosOsDocumentos"
+            }
+          ]
+        },
+        "joinMode": "keepNonMatches",
+        "outputDataFrom": "input1",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -128,
+        240
+      ],
+      "id": "d3cf825e-f82d-451e-890d-7cfe684558a1",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc",
+          "mode": "list",
+          "cachedResultName": "Automatiza 1Doc",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 146992888,
+          "mode": "list",
+          "cachedResultName": "_TodosOsDocumentos",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1brVAhvLLpr8IMDvkCwi2u_z94gBwY_txGLg8F2JL0fc/edit#gid=146992888"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        -272,
+        368
+      ],
+      "id": "8adb3cf2-0428-4853-ab1a-5a3c4c3708a8",
+      "name": "Ler Docs Já Salvos",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "AWLTVDXq9Mhp7G4U",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pega todos os itens (linhas da tabela) que chegam.\nconst items = $input.all();\nconst processedItems = [];\n\nfor (const item of items) {\n  // Cria um novo item de saída.\n  const newItem = {\n    json: {\n      // Converte o campo 'linhasDaTabela' para uma string de texto.\n      // Isso garante que o nó Filter possa ler o conteúdo.\n      linhasDaTabela: String(item.json.linhasDaTabela)\n    }\n  };\n  processedItems.push(newItem);\n}\n\n// Retorna a lista com os itens corrigidos.\nreturn processedItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        -112
+      ],
+      "id": "22615c71-e686-4814-a858-1e3f520d535d",
+      "name": "Converter HTML para Texto"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "fe02c016-66c8-48b1-afae-f1886585056a",
+              "leftValue": "={{ $json.linhasDaTabela }}",
+              "rightValue": "DIÁRIA",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "cb39583d-5ddf-411d-b21b-e19fdd928de7",
+              "leftValue": "={{ $json.linhasDaTabela }}",
+              "rightValue": "FÉRIAS",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "6a6fcbd2-6d74-4d24-b53e-17018f071615",
+              "leftValue": "={{ $json.linhasDaTabela }}",
+              "rightValue": "Licença Família",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        288,
+        -112
+      ],
+      "id": "0d91201a-2e3e-4308-a02c-37066bc5fe08",
+      "name": "Filtro"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "GET - Pega Cookie": {
+      "main": [
+        [
+          {
+            "node": "POST (Faz Login e Retorna a Página)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST (Faz Login e Retorna a Página)": {
+      "main": [
+        [
+          {
+            "node": "Extrair Processos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Processos": {
+      "main": [
+        [
+          {
+            "node": "Converter HTML para Texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limpar HTML": {
+      "main": [
+        [
+          {
+            "node": "Processar em Lotes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar em Lotes": {
+      "main": [
+        [
+          {
+            "node": "IA - Extrair Info Básica",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA - Extrair Info Básica": {
+      "main": [
+        [
+          {
+            "node": "Processar Resposta IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar Resposta IA": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET - Página Individual": {
+      "main": [
+        [
+          {
+            "node": "Extrair Conteúdo Descrição",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Conteúdo Descrição": {
+      "main": [
+        [
+          {
+            "node": "IA - Formatar Descrição",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IA - Formatar Descrição": {
+      "main": [
+        [
+          {
+            "node": "Combinar Dados Finais",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Planilha Diárias",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Planilha LF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Planilha Férias",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combinar Dados Finais": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "GET - Pega Cookie",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Planilha Diárias": {
+      "main": [
+        [
+          {
+            "node": "Resposta ao Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Planilha LF": {
+      "main": [
+        [
+          {
+            "node": "Resposta ao Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Planilha Férias": {
+      "main": [
+        [
+          {
+            "node": "Resposta ao Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "IA - Formatar Descrição",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "IA - Extrair Info Básica",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "GET - Página Individual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler Docs Já Salvos": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Converter HTML para Texto": {
+      "main": [
+        [
+          {
+            "node": "Filtro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtro": {
+      "main": [
+        [
+          {
+            "node": "Limpar HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b1cdca76-35d6-4dc8-8524-6133e537c49b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6f279f03eb12bfb2458bd49a5096fddb1f29ff7a8f8ed3a1026d4104b1f1bc08"
+  },
+  "id": "QxyAfxrc1wKzJUC2",
+  "tags": []
+}
