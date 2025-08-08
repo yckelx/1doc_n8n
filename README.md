@@ -6,9 +6,9 @@ Automação para extração de documentos do sistema 1Doc e organização em pla
 
 Conecta no sistema 1Doc, extrai documentos de diárias/férias/licenças, processa com IA e salva automaticamente em planilhas categorizadas.
 
-<img width="1349" height="468" alt="{501F561B-B524-40C1-97A2-37F77BA5F409}" src="https://github.com/user-attachments/assets/d84f6fbc-31da-45bb-892d-b7d9fbc97481" />
-<img width="579" height="68" alt="{8CCC737C-D0CB-4886-B84E-E58FB7F084A0}" src="https://github.com/user-attachments/assets/78a17d88-e432-43cf-b3a5-21f1a0ccb954" />
+<img width="1440" height="67" alt="{1AFDF415-64A4-4451-8719-7479D0872E43}" src="https://github.com/user-attachments/assets/9dcd4d76-72bf-4e33-b326-d6ce16f30787" />
 
+<img width="1349" height="468" alt="{501F561B-B524-40C1-97A2-37F77BA5F409}" src="https://github.com/user-attachments/assets/d84f6fbc-31da-45bb-892d-b7d9fbc97481" />
 
 ## Tecnologias
 
